@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AI Face Recognition & Business Analytics Studio</title>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: #0b0f19;
+            color: #f8fafc;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .card {
+            background: #0f172a;
+            border: 1px solid #1e293b;
+            padding: 40px;
+            border-radius: 20px;
+            text-align: center;
+            max-width: 500px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+        h1 { font-size: 24px; font-weight: 800; margin-bottom: 8px; color: #38bdf8; }
+        p { font-size: 14px; color: #94a3b8; margin-bottom: 28px; }
+        .btn-group { display: flex; flex-direction: column; gap: 14px; }
+        .btn {
+            display: block;
+            padding: 14px 24px;
+            border-radius: 12px;
+            font-weight: 700;
+            text-decoration: none;
+            transition: transform 0.2s;
+        }
+        .btn:hover { transform: translateY(-2px); }
+        .btn-primary { background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; }
+        .btn-secondary { background: #1e293b; border: 1px solid #334155; color: #38bdf8; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>🧠 VisionAnalytics Studio</h1>
+        <p>Choose an application interface to launch:</p>
+        <div class="btn-group">
+            <a href="http://localhost:5000/chat" class="btn btn-primary">💬 Launch Flask AI Chat Studio (Port 5000)</a>
+            <a href="http://localhost:8501" class="btn btn-secondary">⚡ Launch Streamlit AI Studio (Port 8501)</a>
+        </div>
+    </div>
+</body>
+</html>
+

@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Face Recognition Attendance System</title>
+    <!-- Google Fonts & Font Awesome Icons -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="brand-icon">
+                    <i class="fa-solid fa-face-smile"></i>
+                </div>
+                <div class="brand-text">
+                    <h2>VisionAttendance</h2>
+                    <span>AI Recognition System</span>
+                </div>
+            </div>
+
+            <nav class="nav-menu">
+                <button class="nav-item active" data-tab="tab-live">
+                    <i class="fa-solid fa-video"></i>
+                    <span>Live Scanner</span>
+                </button>
+                <button class="nav-item" data-tab="tab-register">
+                    <i class="fa-solid fa-user-plus"></i>
+                    <span>Register Student</span>
+                </button>
+                <button class="nav-item" data-tab="tab-logs">
+                    <i class="fa-solid fa-clipboard-user"></i>
+                    <span>Attendance Logs</span>
+                </button>
+                <button class="nav-item" data-tab="tab-students">
+                    <i class="fa-solid fa-users"></i>
+                    <span>Students Directory</span>
+                </button>
+                <button class="nav-item" data-tab="tab-chat">
+                    <i class="fa-solid fa-robot"></i>
+                    <span>AI Business Studio</span>
+                </button>
+            </nav>
+
+
+            <div class="sidebar-footer">
+                <div class="system-status">
+                    <span class="status-indicator online"></span>
+                    <div class="status-info">
+                        <span class="status-label">System Active</span>
+                        <span class="status-sub" id="model-status-text">Model Ready</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Top Header -->
+            <header class="top-header">
+                <div class="page-title">
+                    <h1 id="tab-title">Live Recognition Scanner</h1>
+                    <p id="tab-subtitle">Real-time webcam face detection and automated attendance logging</p>
+                </div>
+                <div class="header-actions">
+                    <button class="btn btn-secondary" id="btn-retrain">
+                        <i class="fa-solid fa-rotate"></i> Retrain AI Model
+                    </button>
+                    <div class="date-badge">
+                        <i class="fa-regular fa-calendar-days"></i>
+                        <span id="current-date-display">Today</span>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Metrics Overview Cards -->
+            <section class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon icon-purple">
+                        <i class="fa-solid fa-user-graduate"></i>
+                    </div>
+                    <div class="stat-details">
+                        <span class="stat-title">Total Enrolled</span>
+                        <h3 class="stat-value" id="stat-total-students">0</h3>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-icon icon-green">
+                        <i class="fa-solid fa-user-check"></i>
+                    </div>
+                    <div class="stat-details">
+                        <span class="stat-title">Present Today</span>
+                        <h3 class="stat-value" id="stat-present-today">0</h3>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-icon icon-orange">
+                        <i class="fa-solid fa-user-xmark"></i>
+                    </div>
+                    <div class="stat-details">
+                        <span class="stat-title">Absent Today</span>
+                        <h3 class="stat-value" id="stat-absent-today">0</h3>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-icon icon-blue">
+                        <i class="fa-solid fa-database"></i>
+                    </div>
+                    <div class="stat-details">
+                        <span class="stat-title">Total Logs</span>
+                        <h3 class="stat-value" id="stat-total-logs">0</h3>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tab 1: Live Scanner -->
+            <section class="tab-content active" id="tab-live">
+                <div class="scanner-layout">
+                    <div class="video-container shadow-card">
+                        <div class="video-header">
+                            <span class="live-tag"><i class="fa-solid fa-circle"></i> LIVE STREAM</span>
+                            <span class="cam-info"><i class="fa-solid fa-camera"></i> Camera 0 (640x480)</span>
+                        </div>
+                        <div class="video-wrapper">
+                            <img src="{{ url_for('video_feed') }}" alt="Live Camera Feed" id="video-stream">
+                        </div>
+                        <div class="video-footer">
+                            <p><i class="fa-solid fa-lightbulb"></i> Position your face within the camera frame for automated detection.</p>
+                        </div>
+                    </div>
+
+                    <div class="live-activity-panel shadow-card">
+                        <div class="panel-header">
+                            <h3><i class="fa-solid fa-bolt"></i> Real-time Activity</h3>
+                            <button class="btn-sm btn-outline" id="btn-refresh-logs"><i class="fa-solid fa-arrows-rotate"></i></button>
+                        </div>
+                        <div class="activity-feed" id="recent-activity-feed">
+                            <div class="empty-state">
+                                <i class="fa-solid fa-face-viewfinder"></i>
+                                <p>Scanning for faces...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tab 2: Register Student -->
+            <section class="tab-content" id="tab-register">
+                <div class="register-grid">
+                    <div class="form-card shadow-card">
+                        <div class="card-header">
+                            <h2>Enroll New Student</h2>
+                            <p>Fill student details and capture training images.</p>
+                        </div>
+                        <form id="form-register-student">
+                            <div class="form-group">
+                                <label for="reg-student-id">Student ID / Roll No *</label>
+                                <input type="text" id="reg-student-id" placeholder="e.g. STU101" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="reg-name">Full Name *</label>
+                                <input type="text" id="reg-name" placeholder="e.g. John Doe" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="reg-department">Department *</label>
+                                <select id="reg-department" required>
+                                    <option value="">Select Department</option>
+                                    <option value="Computer Science">Computer Science</option>
+                                    <option value="Information Technology">Information Technology</option>
+                                    <option value="Electronics & Comm">Electronics & Comm</option>
+                                    <option value="Mechanical Eng">Mechanical Eng</option>
+                                    <option value="Electrical Eng">Electrical Eng</option>
+                                    <option value="Civil Eng">Civil Eng</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="reg-email">Email Address</label>
+                                <input type="email" id="reg-email" placeholder="e.g. john@university.edu">
+                            </div>
+
+                            <div class="capture-options">
+                                <label>Face Dataset Capture Mode</label>
+                                <div class="option-toggle">
+                                    <button type="button" class="btn-toggle active" id="btn-mode-webcam">
+                                        <i class="fa-solid fa-camera"></i> Live Webcam
+                                    </button>
+                                    <button type="button" class="btn-toggle" id="btn-mode-browser">
+                                        <i class="fa-solid fa-desktop"></i> Browser Cam Snapshot
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Browser Webcam Live Preview Area -->
+                            <div class="browser-cam-area hidden" id="browser-cam-area">
+                                <video id="browser-webcam-preview" autoplay playsinline></video>
+                                <canvas id="browser-webcam-canvas" class="hidden"></canvas>
+                                <div class="cam-controls">
+                                    <button type="button" class="btn btn-secondary" id="btn-capture-snapshot">
+                                        <i class="fa-solid fa-aperture"></i> Capture Photo (<span id="snap-count">0</span>/10)
+                                    </button>
+                                </div>
+                                <div class="snapshots-preview" id="snapshots-container"></div>
+                            </div>
+
+                            <div class="form-actions">
+                                <button type="submit" class="btn btn-primary btn-block" id="btn-submit-registration">
+                                    <i class="fa-solid fa-user-plus"></i> Register & Train Model
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tab 3: Attendance Logs -->
+            <section class="tab-content" id="tab-logs">
+                <div class="logs-container shadow-card">
+                    <div class="table-toolbar">
+                        <div class="filter-group">
+                            <div class="input-with-icon">
+                                <i class="fa-solid fa-search"></i>
+                                <input type="text" id="log-search" placeholder="Search by name or ID...">
+                            </div>
+
+                            <div class="input-with-icon">
+                                <i class="fa-solid fa-calendar"></i>
+                                <input type="date" id="log-date-filter">
+                            </div>
+
+                            <select id="log-dept-filter">
+                                <option value="All">All Departments</option>
+                                <option value="Computer Science">Computer Science</option>
+                                <option value="Information Technology">Information Technology</option>
+                                <option value="Electronics & Comm">Electronics & Comm</option>
+                                <option value="Mechanical Eng">Mechanical Eng</option>
+                                <option value="Electrical Eng">Electrical Eng</option>
+                            </select>
+                        </div>
+
+                        <div class="toolbar-actions">
+                            <button class="btn btn-success" id="btn-export-csv">
+                                <i class="fa-solid fa-file-csv"></i> Export CSV
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="custom-table">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Student ID</th>
+                                    <th>Name</th>
+                                    <th>Department</th>
+                                    <th>Date</th>
+                                    <th>Time</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="attendance-table-body">
+                                <tr>
+                                    <td colspan="7" class="text-center py-4">Loading attendance records...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tab 4: Students Directory -->
+            <section class="tab-content" id="tab-students">
+                <div class="students-container shadow-card">
+                    <div class="table-toolbar">
+                        <div class="input-with-icon">
+                            <i class="fa-solid fa-search"></i>
+                            <input type="text" id="student-search" placeholder="Search students...">
+                        </div>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="custom-table">
+                            <thead>
+                                <tr>
+                                    <th>Student ID</th>
+                                    <th>Full Name</th>
+                                    <th>Department</th>
+                                    <th>Email</th>
+                                    <th>Registered On</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="students-table-body">
+                                <tr>
+                                    <td colspan="6" class="text-center py-4">Loading students...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            <!-- Tab 5: AI Business Studio Chatbot -->
+            <section class="tab-content" id="tab-chat">
+                <div class="chat-studio-container shadow-card">
+                    <div class="chat-header">
+                        <div class="chat-title-group">
+                            <div class="ai-avatar-badge">
+                                <i class="fa-solid fa-brain"></i>
+                            </div>
+                            <div>
+                                <h3>AI Business Analytics Assistant</h3>
+                                <p class="sub-text"><span class="pulse-dot"></span> Online • Connected to SQLite Attendance Database</p>
+                            </div>
+                        </div>
+                        <button class="btn btn-secondary btn-sm" id="btn-chat-clear" title="Clear conversation history">
+                            <i class="fa-solid fa-trash-can"></i> Clear Chat
+                        </button>
+                    </div>
+
+                    <!-- Quick Prompt Suggestions Chips -->
+                    <div class="chat-chips-bar">
+                        <span class="chip-label"><i class="fa-solid fa-wand-magic-sparkles"></i> Try asking:</span>
+                        <button class="prompt-chip" data-prompt="Show today summary">⚡ Today's Summary</button>
+                        <button class="prompt-chip" data-prompt="Department breakdown">📊 Department Breakdown</button>
+                        <button class="prompt-chip" data-prompt="Who is absent today?">❌ Absent Students</button>
+                        <button class="prompt-chip" data-prompt="Show 7-day attendance trend">📈 Attendance Trends</button>
+                        <button class="prompt-chip" data-prompt="Show recent attendance logs">🕒 Recent Scans</button>
+                    </div>
+
+                    <!-- Messages Log Window -->
+                    <div class="chat-messages" id="chat-messages">
+                        <!-- Welcome message initialized by JS -->
+                    </div>
+
+                    <!-- Chat Control Input Bar -->
+                    <div class="chat-input-bar">
+                        <div class="chat-input-wrapper">
+                            <textarea id="chat-input" placeholder="Ask AI about attendance stats, department metrics, absent lists, or trends..." rows="1"></textarea>
+                            <button id="btn-chat-send" class="btn btn-primary btn-icon" title="Send query">
+                                <i class="fa-solid fa-paper-plane"></i>
+                            </button>
+                        </div>
+                        <div class="chat-input-footer">
+                            <span><i class="fa-solid fa-shield-halved"></i> Privacy Protected • Local SQLite AI Query Processor</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Toast Notifications Container -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
+

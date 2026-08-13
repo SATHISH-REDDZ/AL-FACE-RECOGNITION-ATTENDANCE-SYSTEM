@@ -1,0 +1,19 @@
+# Python & Virtual Env
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Data & Models
+data/attendance.db
+data/trainer/trainer.yml
+data/dataset/*
+!data/dataset/.gitkeep
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

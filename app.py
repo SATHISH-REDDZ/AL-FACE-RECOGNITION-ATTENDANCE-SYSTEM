@@ -90,18 +90,22 @@ def video_feed():
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/api/stats', methods=['GET'])
+@login_required
 def api_stats():
     stats = database.get_stats()
     stats["model_trained"] = engine.is_trained
     return jsonify(stats)
 
 @app.route('/api/students', methods=['GET'])
+@login_required
 def api_get_students():
     students = database.get_all_students()
     return jsonify({"status": "success", "students": students})
 
 @app.route('/api/students', methods=['POST'])
+@login_required
 def api_add_student():
+
     data = request.get_json() or {}
     student_id = data.get('student_id', '').strip()
     name = data.get('name', '').strip()
@@ -205,13 +209,14 @@ def api_get_attendance():
     return jsonify({"status": "success", "logs": logs})
 
 @app.route('/api/attendance/export', methods=['GET'])
+@login_required
 def api_export_attendance():
     date_filter = request.args.get('date')
     department_filter = request.args.get('department')
+    export_format = (request.args.get('format') or 'csv').lower()
 
     logs = database.get_attendance_logs(date_filter, department_filter)
     if not logs:
-        # Export empty structure
         df = pd.DataFrame(columns=["ID", "Student ID", "Name", "Department", "Date", "Time", "Timestamp"])
     else:
         df = pd.DataFrame(logs)
@@ -225,19 +230,30 @@ def api_export_attendance():
             "timestamp": "Timestamp"
         }, inplace=True)
 
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Attendance')
-    
-    # Or fallback to CSV if openpyxl isn't available
-    output.seek(0)
+    filename_base = f"attendance_report_{date_filter or 'all'}"
+
+    if export_format in ('xlsx', 'excel'):
+        output = io.BytesIO()
+        try:
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Attendance')
+            output.seek(0)
+            return Response(
+                output.getvalue(),
+                mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-disposition": f"attachment; filename={filename_base}.xlsx"}
+            )
+        except Exception as e:
+            print(f"Excel export failed, falling back to CSV: {e}")
+
+    # Default CSV Export
     csv_data = df.to_csv(index=False)
-    
     return Response(
         csv_data,
         mimetype="text/csv",
-        headers={"Content-disposition": f"attachment; filename=attendance_report_{date_filter or 'all'}.csv"}
+        headers={"Content-disposition": f"attachment; filename={filename_base}.csv"}
     )
+
 
 @app.route('/chat')
 @login_required

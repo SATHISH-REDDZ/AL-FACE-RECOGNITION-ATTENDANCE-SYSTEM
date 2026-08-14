@@ -1,4 +1,9 @@
 import os
+import secrets
+from dotenv import load_dotenv
+
+# Load .env file if present
+load_dotenv()
 
 # Base Directories
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -18,13 +23,19 @@ FRAME_HEIGHT = 480
 CONFIDENCE_THRESHOLD = 75  # Lower distance metric means higher match confidence in LBPH
 COOLDOWN_SECONDS = 300     # 5 minutes cooldown before re-marking attendance for same user
 
+# Admin Authentication Config
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+
 # Security & Server Configurations
-SECRET_KEY = os.getenv("SECRET_KEY", "vision_attendance_secret_key_2026_prod_secure")
+SECRET_KEY = os.getenv("SECRET_KEY") or secrets.token_hex(32)
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", 5000))
-DEBUG = os.getenv("FLASK_DEBUG", "True").lower() in ("true", "1", "yes")
+# Default to False in production for security, unless FLASK_DEBUG is explicitly enabled
+DEBUG = os.getenv("FLASK_DEBUG", "False").lower() in ("true", "1", "yes")
 
 # Ensure essential directories exist
 for folder in [DATA_DIR, DATASET_DIR, TRAINER_DIR, os.path.dirname(HAAR_CASCADE_PATH)]:
     os.makedirs(folder, exist_ok=True)
+
 

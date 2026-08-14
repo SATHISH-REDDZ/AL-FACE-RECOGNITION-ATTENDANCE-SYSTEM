@@ -59,18 +59,21 @@ def init_db():
     seed_default_admin()
 
 def seed_default_admin():
-    """Create default super admin account if none exists."""
+    """Create default super admin account if none exists using config credentials."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) as count FROM users;")
     if cursor.fetchone()["count"] == 0:
-        hashed = generate_password_hash("admin123")
+        username = config.ADMIN_USERNAME
+        password = config.ADMIN_PASSWORD
+        hashed = generate_password_hash(password)
         cursor.execute("""
             INSERT INTO users (username, password_hash, role, name)
             VALUES (?, ?, ?, ?);
-        """, ("admin", hashed, "admin", "System Administrator"))
+        """, (username, hashed, "admin", "System Administrator"))
         conn.commit()
     conn.close()
+
 
 def create_user(username, password, name, role="admin"):
     """Register a new user with hashed password."""

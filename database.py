@@ -4,9 +4,10 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import config
 
 def get_connection():
-    """Create a database connection with dictionary cursor row factory."""
+    """Create a database connection with dictionary cursor row factory and Foreign Keys enabled."""
     conn = sqlite3.connect(config.DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON;")
     return conn
 
 def init_db():
@@ -37,6 +38,17 @@ def init_db():
             registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
+
+    # Attendance Sessions Table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS attendance_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_name TEXT NOT NULL,
+            department TEXT NOT NULL,
+            date TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
     
     # Attendance Log Table
     cursor.execute("""
@@ -51,12 +63,39 @@ def init_db():
             FOREIGN KEY (student_id) REFERENCES students (student_id)
         );
     """)
+
+    # Audit Logs Table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            action TEXT NOT NULL,
+            status TEXT NOT NULL,
+            details TEXT,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
     
     conn.commit()
     conn.close()
 
     # Seed default admin if no users exist
     seed_default_admin()
+
+def log_audit_event(username, action, status="SUCCESS", details=""):
+    """Record administrative or security audit log entry."""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO audit_logs (username, action, status, details)
+            VALUES (?, ?, ?, ?);
+        """, (username, action, status, details))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Audit log error: {e}")
+
 
 def seed_default_admin():
     """Create default super admin account if none exists using config credentials."""

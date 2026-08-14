@@ -168,16 +168,40 @@ class FaceRecognitionEngine:
 
 
     def save_face_samples(self, student_id, frame, count):
-        """Save a cropped face sample for a student dataset."""
+        """
+        Save a cropped face sample for a student dataset with quality controls:
+        - Rejects 0 faces or >1 faces in enrollment frame
+        - Evaluates face blurriness via Laplacian variance
+        - Evaluates lighting conditions via mean gray brightness
+        """
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = self.detect_faces(gray)
 
         if len(faces) == 0:
-            return False, "No face detected in frame."
+            return False, "No face detected in frame. Position your face clearly."
 
-        # Take largest face
-        (x, y, w, h) = max(faces, key=lambda b: b[2] * b[3])
+        if len(faces) > 1:
+            return False, "Multiple faces detected (found " + str(len(faces)) + "). Only 1 person must be in frame during enrollment."
+
+        (x, y, w, h) = faces[0]
+
+        if w < 90 or h < 90:
+            return False, "Face is too far from camera. Please move closer."
+
         face_crop = gray[y:y+h, x:x+w]
+
+        # Blur check via Laplacian variance
+        laplacian_var = cv2.Laplacian(face_crop, cv2.CV_64F).var()
+        if laplacian_var < 35.0:
+            return False, f"Image too blurry (sharpness score {laplacian_var:.1f}). Hold steady."
+
+        # Brightness check
+        brightness = np.mean(face_crop)
+        if brightness < 30:
+            return False, "Lighting is too dark. Increase ambient lighting."
+        if brightness > 230:
+            return False, "Lighting is overexposed. Reduce direct glare."
+
         face_crop = cv2.resize(face_crop, (200, 200))
 
         student_dir = os.path.join(config.DATASET_DIR, student_id)
@@ -185,6 +209,7 @@ class FaceRecognitionEngine:
         file_path = os.path.join(student_dir, f"{student_id}_{count}.jpg")
         cv2.imwrite(file_path, face_crop)
         return True, file_path
+
 
     def process_frame(self, frame):
         """

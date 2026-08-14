@@ -2,7 +2,8 @@ import os
 import cv2
 import base64
 import numpy as np
-from flask import Flask, render_template, Response, request, jsonify, send_file
+from flask import Flask, render_template, Response, request, jsonify, redirect, url_for, session
+from functools import wraps
 import io
 import pandas as pd
 import config
@@ -11,7 +12,39 @@ from face_engine import engine
 import analytics_engine
 
 app = Flask(__name__)
+app.secret_key = config.SECRET_KEY
 
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user' not in session:
+            if request.is_json or request.path.startswith('/api/'):
+                return jsonify({"status": "error", "message": "Authentication required. Please log in."}), 401
+            return redirect(url_for('login_view', next=request.url))
+        return f(*args, **kwargs)
+    return decorated_function
+
+@app.route('/login', methods=['GET', 'POST'])
+def login_view():
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
+
+        user = database.verify_user(username, password)
+        if user:
+            session['user'] = user
+            next_page = request.args.get('next') or url_for('index')
+            return redirect(next_page)
+        return render_template('login.html', error="Invalid username or password.")
+    
+    if 'user' in session:
+        return redirect(url_for('index'))
+    return render_template('login.html')
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login_view'))
 
 # Global camera reference
 camera = None
@@ -30,7 +63,6 @@ def generate_video_frames():
     while True:
         success, frame = cam.read()
         if not success:
-            # If webcam fails or is unavailable, create a synthetic frame
             blank = np.zeros((config.FRAME_HEIGHT, config.FRAME_WIDTH, 3), dtype=np.uint8)
             cv2.putText(blank, "Webcam feed unavailable", (120, 240),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
@@ -40,7 +72,6 @@ def generate_video_frames():
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
             break
         else:
-            # Process frame through face recognition engine
             processed_frame, _ = engine.process_frame(frame)
             ret, buffer = cv2.imencode('.jpg', processed_frame)
             frame_bytes = buffer.tobytes()
@@ -48,8 +79,10 @@ def generate_video_frames():
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
 @app.route('/')
+@login_required
 def index():
-    return render_template('index.html')
+    return render_template('index.html', current_user=session.get('user'))
+
 
 @app.route('/video_feed')
 def video_feed():
@@ -207,11 +240,31 @@ def api_export_attendance():
     )
 
 @app.route('/chat')
+@login_required
 def chat_view():
     """Render main interface opened to AI Business Studio Chat tab."""
-    return render_template('index.html', default_tab='tab-chat')
+    return render_template('index.html', default_tab='tab-chat', current_user=session.get('user'))
+
+@app.route('/api/recognition/frame', methods=['POST'])
+def api_recognition_frame():
+    """Process base64 webcam frame captured by client browser."""
+    data = request.get_json() or {}
+    image_b64 = data.get('image', '')
+    if not image_b64:
+        return jsonify({"status": "error", "message": "Image frame is required."}), 400
+
+    annotated_b64, notifications, err = engine.process_base64_frame(image_b64)
+    if err:
+        return jsonify({"status": "error", "message": err}), 400
+
+    return jsonify({
+        "status": "success",
+        "image": annotated_b64,
+        "notifications": notifications
+    })
 
 @app.route('/api/chat', methods=['POST'])
+@login_required
 def api_chat():
     """Process natural language query for AI Business Analytics Studio."""
     data = request.get_json() or {}
@@ -223,12 +276,14 @@ def api_chat():
     return jsonify(res)
 
 @app.route('/api/analytics', methods=['GET'])
+@login_required
 def api_analytics():
     """Get rich analytics summary for dashboard and chart rendering."""
     summary = database.get_analytics_summary()
     return jsonify({"status": "success", "analytics": summary})
 
 @app.route('/api/train', methods=['POST'])
+@login_required
 def api_train_model():
     ok, msg = engine.train_model()
     return jsonify({"status": "success" if ok else "error", "message": msg})
@@ -237,4 +292,5 @@ if __name__ == '__main__':
     database.init_db()
     engine.load_model()
     app.run(host=config.HOST, port=config.PORT, debug=config.DEBUG)
+
 

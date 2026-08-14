@@ -1,5 +1,6 @@
 import sqlite3
 from datetime import datetime, timedelta
+from werkzeug.security import generate_password_hash, check_password_hash
 import config
 
 def get_connection():
@@ -13,6 +14,18 @@ def init_db():
     conn = get_connection()
     cursor = conn.cursor()
     
+    # Users & Authentication Table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT DEFAULT 'admin',
+            name TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
     # Students Table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS students (
@@ -41,6 +54,63 @@ def init_db():
     
     conn.commit()
     conn.close()
+
+    # Seed default admin if no users exist
+    seed_default_admin()
+
+def seed_default_admin():
+    """Create default super admin account if none exists."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) as count FROM users;")
+    if cursor.fetchone()["count"] == 0:
+        hashed = generate_password_hash("admin123")
+        cursor.execute("""
+            INSERT INTO users (username, password_hash, role, name)
+            VALUES (?, ?, ?, ?);
+        """, ("admin", hashed, "admin", "System Administrator"))
+        conn.commit()
+    conn.close()
+
+def create_user(username, password, name, role="admin"):
+    """Register a new user with hashed password."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        hashed = generate_password_hash(password)
+        cursor.execute("""
+            INSERT INTO users (username, password_hash, role, name)
+            VALUES (?, ?, ?, ?);
+        """, (username, hashed, role, name))
+        conn.commit()
+        return True, "User created successfully."
+    except Exception as e:
+        return False, str(e)
+    finally:
+        conn.close()
+
+def verify_user(username, password):
+    """Verify user credentials and return user object if valid."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE username = ?;", (username,))
+    row = cursor.fetchone()
+    conn.close()
+    if row and check_password_hash(row["password_hash"], password):
+        user_dict = dict(row)
+        user_dict.pop("password_hash", None)
+        return user_dict
+    return None
+
+def get_user_by_username(username):
+    """Fetch user dict by username."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, username, role, name, created_at FROM users WHERE username = ?;", (username,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
 
 def add_student(student_id, name, department, email=""):
     """Register or update a student."""

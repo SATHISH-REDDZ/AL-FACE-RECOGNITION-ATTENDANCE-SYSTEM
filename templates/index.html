@@ -78,7 +78,15 @@
                         <i class="fa-regular fa-calendar-days"></i>
                         <span id="current-date-display">Today</span>
                     </div>
+                    <div class="user-badge" style="display: flex; align-items: center; gap: 10px; background: rgba(30, 41, 59, 0.6); border: 1px solid var(--bg-card-border); padding: 6px 14px; border-radius: 20px;">
+                        <i class="fa-solid fa-user-shield" style="color: var(--accent-green);"></i>
+                        <span style="font-size: 13px; font-weight: 600;">{{ current_user.name if current_user else 'Admin' }}</span>
+                        <a href="/logout" class="btn btn-secondary btn-sm" style="padding: 4px 10px; font-size: 11px; margin-left: 4px;" title="Logout of portal">
+                            <i class="fa-solid fa-right-from-bracket"></i> Logout
+                        </a>
+                    </div>
                 </div>
+
             </header>
 
             <!-- Metrics Overview Cards -->
@@ -130,14 +138,25 @@
                     <div class="video-container shadow-card">
                         <div class="video-header">
                             <span class="live-tag"><i class="fa-solid fa-circle"></i> LIVE STREAM</span>
-                            <span class="cam-info"><i class="fa-solid fa-camera"></i> Camera 0 (640x480)</span>
+                            <div class="cam-controls" style="display: flex; gap: 8px; align-items: center;">
+                                <button class="btn btn-secondary btn-sm" id="btn-toggle-cam-source" style="font-size: 11px;">
+                                    <i class="fa-solid fa-laptop-code"></i> Switch to Browser Camera
+                                </button>
+                                <span class="cam-info"><i class="fa-solid fa-camera"></i> <span id="cam-mode-label">Server Camera</span></span>
+                            </div>
                         </div>
                         <div class="video-wrapper">
+                            <!-- Server Camera Feed -->
                             <img src="{{ url_for('video_feed') }}" alt="Live Camera Feed" id="video-stream">
+                            <!-- Browser Client Camera Feed (Hidden by default, used for Cloud Deployment) -->
+                            <video id="client-webcam" autoplay playsinline muted style="display:none; width:100%; height:100%; object-fit:cover;"></video>
+                            <canvas id="client-canvas" style="display:none;"></canvas>
+                            <img id="client-preview" style="display:none; width:100%; height:100%; object-fit:cover;">
                         </div>
                         <div class="video-footer">
-                            <p><i class="fa-solid fa-lightbulb"></i> Position your face within the camera frame for automated detection.</p>
+                            <p><i class="fa-solid fa-lightbulb"></i> Position your face within the frame. Browser Camera mode works on all Cloud Servers (Render, AWS, Streamlit).</p>
                         </div>
+
                     </div>
 
                     <div class="live-activity-panel shadow-card">

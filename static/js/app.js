@@ -58,6 +58,99 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    // ==========================================================================
+    // Browser Client Camera Stream Controller (Cloud Deployment Compatible)
+    // ==========================================================================
+    const btnToggleCamSource = document.getElementById('btn-toggle-cam-source');
+    const camModeLabel = document.getElementById('cam-mode-label');
+    const serverVideoStream = document.getElementById('video-stream');
+    const clientWebcam = document.getElementById('client-webcam');
+    const clientCanvas = document.getElementById('client-canvas');
+    const clientPreview = document.getElementById('client-preview');
+
+    let clientCamActive = false;
+    let clientMediaStream = null;
+    let frameSendInterval = null;
+
+    if (btnToggleCamSource) {
+        btnToggleCamSource.addEventListener('click', toggleCameraMode);
+    }
+
+    async function toggleCameraMode() {
+        if (!clientCamActive) {
+            // Switch to Browser Camera
+            try {
+                clientMediaStream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" }
+                });
+                clientWebcam.srcObject = clientMediaStream;
+                clientWebcam.style.display = 'none';
+                serverVideoStream.style.display = 'none';
+                clientPreview.style.display = 'block';
+
+                clientCamActive = true;
+                if (camModeLabel) camModeLabel.textContent = 'Browser Camera (Cloud Feed)';
+                btnToggleCamSource.innerHTML = '<i class="fa-solid fa-server"></i> Switch to Server Camera';
+                showToast('Browser Camera started successfully.', 'success');
+
+                // Start sending frames to API every 350ms
+                frameSendInterval = setInterval(captureAndSendFrame, 350);
+            } catch (err) {
+                console.error("Camera access error:", err);
+                showToast("Unable to access browser camera. Permission denied or no camera device found.", "error");
+            }
+        } else {
+            // Switch back to Server Camera
+            stopBrowserCamera();
+            if (camModeLabel) camModeLabel.textContent = 'Server Camera';
+            btnToggleCamSource.innerHTML = '<i class="fa-solid fa-laptop-code"></i> Switch to Browser Camera';
+            serverVideoStream.style.display = 'block';
+            clientPreview.style.display = 'none';
+            showToast('Switched to Server Camera.', 'info');
+        }
+    }
+
+    function stopBrowserCamera() {
+        clientCamActive = false;
+        if (frameSendInterval) clearInterval(frameSendInterval);
+        if (clientMediaStream) {
+            clientMediaStream.getTracks().forEach(track => track.stop());
+            clientMediaStream = null;
+        }
+    }
+
+    async function captureAndSendFrame() {
+        if (!clientCamActive || !clientWebcam.videoWidth) return;
+
+        clientCanvas.width = clientWebcam.videoWidth;
+        clientCanvas.height = clientWebcam.videoHeight;
+        const ctx = clientCanvas.getContext('2d');
+        ctx.drawImage(clientWebcam, 0, 0, clientCanvas.width, clientCanvas.height);
+
+        const base64Frame = clientCanvas.toDataURL('image/jpeg', 0.8);
+
+        try {
+            const res = await fetch('/api/recognition/frame', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image: base64Frame })
+            });
+
+            const data = await res.json();
+            if (data.status === 'success' && data.image) {
+                clientPreview.src = data.image;
+                if (data.notifications && data.notifications.length > 0) {
+                    data.notifications.forEach(n => showToast(n.message, n.status));
+                    fetchStats();
+                    loadRecentActivity();
+                }
+            }
+        } catch (err) {
+            console.error("Error sending frame:", err);
+        }
+    }
+
+
     // Fetch Stats Summary
     async function fetchStats() {
         try {

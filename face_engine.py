@@ -1,5 +1,8 @@
 import os
+import json
+import base64
 import urllib.request
+from datetime import datetime
 import cv2
 import numpy as np
 from PIL import Image
@@ -12,7 +15,6 @@ def get_haar_cascade_path():
     if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
         return local_path
 
-    # Try default opencv path
     try:
         cv_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
         if os.path.exists(cv_path) and os.path.getsize(cv_path) > 0:
@@ -20,11 +22,9 @@ def get_haar_cascade_path():
     except Exception:
         pass
 
-    # Download from official OpenCV GitHub repository if not present locally
     url = "https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_frontalface_default.xml"
     os.makedirs(os.path.dirname(local_path), exist_ok=True)
     try:
-        print(f"Downloading Haar Cascade XML from {url}...")
         urllib.request.urlretrieve(url, local_path)
         return local_path
     except Exception as e:
@@ -36,8 +36,6 @@ class FaceRecognitionEngine:
         cascade_path = get_haar_cascade_path()
         self.face_cascade = cv2.CascadeClassifier(cascade_path)
 
-        
-        # Initialize LBPH Face Recognizer
         try:
             self.recognizer = cv2.face.LBPHFaceRecognizer_create()
         except AttributeError:
@@ -46,7 +44,7 @@ class FaceRecognitionEngine:
             )
             
         self.is_trained = False
-        self.label_map = {}  # Maps integer LBPH labels to student_id strings
+        self.label_map = {}  # Maps int LBPH labels to student_id strings
         self.inverse_label_map = {}
         self.last_recognized_notification = None
         
@@ -65,7 +63,7 @@ class FaceRecognitionEngine:
     def train_model(self):
         """
         Train LBPH model using all images in DATASET_DIR.
-        Saves model file to MODEL_PATH and updates label mappings.
+        Saves model to MODEL_PATH, labels to LABELS_PATH, and metadata to METADATA_PATH.
         """
         image_paths = []
         for root, _, files in os.walk(config.DATASET_DIR):
@@ -85,7 +83,6 @@ class FaceRecognitionEngine:
 
         for path in image_paths:
             filename = os.path.basename(path)
-            # Filename pattern: StudentID_sampleNum.jpg
             parts = filename.split('_')
             if len(parts) < 2:
                 continue
@@ -98,7 +95,7 @@ class FaceRecognitionEngine:
 
             int_id = self.inverse_label_map[student_id]
 
-            pil_img = Image.open(path).convert('L') # Convert to grayscale
+            pil_img = Image.open(path).convert('L')
             img_numpy = np.array(pil_img, 'uint8')
 
             faces = self.detect_faces(img_numpy)
@@ -114,33 +111,61 @@ class FaceRecognitionEngine:
         self.recognizer.save(config.MODEL_PATH)
         self.is_trained = True
 
+        # Persist label mapping to labels.json
+        try:
+            with open(config.LABELS_PATH, 'w') as f:
+                json.dump(self.label_map, f, indent=2)
+        except Exception as e:
+            print(f"Error saving labels.json: {e}")
+
+        # Persist metadata.json
+        metadata = {
+            "model": "LBPH",
+            "trained_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "student_count": len(self.label_map),
+            "sample_count": len(face_samples)
+        }
+        try:
+            with open(config.METADATA_PATH, 'w') as f:
+                json.dump(metadata, f, indent=2)
+        except Exception as e:
+            print(f"Error saving metadata.json: {e}")
+
         return True, f"Successfully trained on {len(face_samples)} face samples across {len(self.label_map)} students."
 
     def load_model(self):
-        """Load trained LBPH model if file exists."""
+        """Load trained LBPH model and persisted labels.json if present."""
         if os.path.exists(config.MODEL_PATH):
             try:
                 self.recognizer.read(config.MODEL_PATH)
                 self.is_trained = True
                 
-                # Build label map based on existing dataset files
-                label_counter = 1
-                self.label_map = {}
-                self.inverse_label_map = {}
-                for root, _, files in os.walk(config.DATASET_DIR):
-                    for file in files:
-                        if file.endswith((".jpg", ".png", ".jpeg")):
-                            filename = os.path.basename(file)
-                            parts = filename.split('_')
-                            if len(parts) >= 2:
-                                student_id = parts[0]
-                                if student_id not in self.inverse_label_map:
-                                    self.inverse_label_map[student_id] = label_counter
-                                    self.label_map[label_counter] = student_id
-                                    label_counter += 1
+                # Load persisted label mapping from JSON
+                if os.path.exists(config.LABELS_PATH):
+                    with open(config.LABELS_PATH, 'r') as f:
+                        raw_map = json.load(f)
+                        self.label_map = {int(k): v for k, v in raw_map.items()}
+                        self.inverse_label_map = {v: int(k) for k, v in raw_map.items()}
+                else:
+                    # Fallback to dataset directory reconstruction
+                    label_counter = 1
+                    self.label_map = {}
+                    self.inverse_label_map = {}
+                    for root, _, files in os.walk(config.DATASET_DIR):
+                        for file in files:
+                            if file.endswith((".jpg", ".png", ".jpeg")):
+                                filename = os.path.basename(file)
+                                parts = filename.split('_')
+                                if len(parts) >= 2:
+                                    student_id = parts[0]
+                                    if student_id not in self.inverse_label_map:
+                                        self.inverse_label_map[student_id] = label_counter
+                                        self.label_map[label_counter] = student_id
+                                        label_counter += 1
             except Exception as e:
                 print(f"Warning: Could not load trained model: {e}")
                 self.is_trained = False
+
 
     def save_face_samples(self, student_id, frame, count):
         """Save a cropped face sample for a student dataset."""
@@ -214,5 +239,33 @@ class FaceRecognitionEngine:
 
         return frame, notifications
 
+    def process_base64_frame(self, b64_string):
+        """
+        Process base64 image frame sent from client browser webcam:
+        Decodes image, performs face recognition, marks attendance,
+        and returns annotated base64 image string + notification payload.
+        """
+        try:
+            if ',' in b64_string:
+                b64_string = b64_string.split(',')[1]
+            img_bytes = base64.b64decode(b64_string)
+            nparr = np.frombuffer(img_bytes, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+            if frame is None:
+                return None, [], "Invalid image format."
+
+            annotated_frame, notifications = self.process_frame(frame)
+
+            # Re-encode to JPEG base64
+            _, buffer = cv2.imencode('.jpg', annotated_frame)
+            encoded_img = base64.b64encode(buffer).decode('utf-8')
+            res_b64 = f"data:image/jpeg;base64,{encoded_img}"
+
+            return res_b64, notifications, None
+        except Exception as e:
+            return None, [], str(e)
+
 # Create singleton engine instance
 engine = FaceRecognitionEngine()
+

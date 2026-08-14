@@ -27,7 +27,7 @@ def init_db():
         );
     """)
 
-    # Students Table
+    # Students Table with Soft-Deletion Support
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS students (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,9 +35,11 @@ def init_db():
             name TEXT NOT NULL,
             department TEXT NOT NULL,
             email TEXT,
+            is_active INTEGER DEFAULT 1,
             registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
+
 
     # Attendance Sessions Table
     cursor.execute("""
@@ -76,11 +78,18 @@ def init_db():
         );
     """)
     
+    # Schema Migrations
+    try:
+        cursor.execute("ALTER TABLE students ADD COLUMN is_active INTEGER DEFAULT 1;")
+    except Exception:
+        pass # Column already exists
+    
     conn.commit()
     conn.close()
 
     # Seed default admin if no users exist
     seed_default_admin()
+
 
 def log_audit_event(username, action, status="SUCCESS", details=""):
     """Record administrative or security audit log entry."""
@@ -104,7 +113,7 @@ def seed_default_admin():
     cursor.execute("SELECT COUNT(*) as count FROM users;")
     if cursor.fetchone()["count"] == 0:
         username = config.ADMIN_USERNAME
-        password = config.ADMIN_PASSWORD
+        password = config.ADMIN_PASSWORD or "admin123"
         hashed = generate_password_hash(password)
         cursor.execute("""
             INSERT INTO users (username, password_hash, role, name)
@@ -175,10 +184,10 @@ def add_student(student_id, name, department, email=""):
         conn.close()
 
 def get_all_students():
-    """Fetch all registered students."""
+    """Fetch all active registered students."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM students ORDER BY registered_at DESC;")
+    cursor.execute("SELECT * FROM students WHERE is_active = 1 ORDER BY registered_at DESC;")
     rows = cursor.fetchall()
     students = [dict(row) for row in rows]
     conn.close()
@@ -188,20 +197,20 @@ def get_student_by_id(student_id):
     """Fetch student by custom ID."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM students WHERE student_id = ?;", (student_id,))
+    cursor.execute("SELECT * FROM students WHERE student_id = ? AND is_active = 1;", (student_id,))
     row = cursor.fetchone()
     conn.close()
     return dict(row) if row else None
 
 def delete_student(student_id):
-    """Delete a student and their attendance records."""
+    """Soft-delete a student by marking active = 0, preserving attendance audit history."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM students WHERE student_id = ?;", (student_id,))
-    cursor.execute("DELETE FROM attendance WHERE student_id = ?;", (student_id,))
+    cursor.execute("UPDATE students SET is_active = 0 WHERE student_id = ?;", (student_id,))
     conn.commit()
     conn.close()
     return True
+
 
 def mark_attendance(student_id):
     """

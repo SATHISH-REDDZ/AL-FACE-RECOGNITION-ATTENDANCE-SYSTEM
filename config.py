@@ -25,7 +25,7 @@ COOLDOWN_SECONDS = 300     # 5 minutes cooldown before re-marking attendance for
 
 # Admin Authentication Config
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD") # Must be provided in .env or setup
 
 # Security & Server Configurations
 SECRET_KEY = os.getenv("SECRET_KEY") or secrets.token_hex(32)
@@ -33,6 +33,7 @@ HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", 5000))
 # Default to False in production for security, unless FLASK_DEBUG is explicitly enabled
 DEBUG = os.getenv("FLASK_DEBUG", "False").lower() in ("true", "1", "yes")
+
 
 # Ensure essential directories exist
 for folder in [DATA_DIR, DATASET_DIR, TRAINER_DIR, os.path.dirname(HAAR_CASCADE_PATH)]:

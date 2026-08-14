@@ -6,11 +6,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const tabSubtitle = document.getElementById('tab-subtitle');
     const currentDateDisplay = document.getElementById('current-date-display');
 
+    // CSRF Token Helper
+    function getCsrfToken() {
+        const meta = document.querySelector('meta[name="csrf-token"]');
+        return meta ? meta.getAttribute('content') : '';
+    }
+
     // Display current date
     const now = new Date();
     currentDateDisplay.textContent = now.toLocaleDateString('en-US', {
         weekday: 'short', month: 'short', day: 'numeric', year: 'numeric'
     });
+
 
     const tabInfo = {
         'tab-live': {
@@ -224,8 +231,12 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btn-retrain')?.addEventListener('click', async () => {
         showToast('Retraining AI Model...', 'info');
         try {
-            const res = await fetch('/api/train', { method: 'POST' });
+            const res = await fetch('/api/train', {
+                method: 'POST',
+                headers: { 'X-CSRF-Token': getCsrfToken() }
+            });
             const data = await res.json();
+
             if (data.status === 'success') {
                 showToast(data.message, 'success');
                 fetchStats();

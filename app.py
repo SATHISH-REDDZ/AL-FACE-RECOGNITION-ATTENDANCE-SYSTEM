@@ -1,7 +1,9 @@
 import os
+import secrets
 import cv2
 import base64
 import logging
+
 from datetime import datetime, timedelta
 import numpy as np
 from flask import Flask, render_template, Response, request, jsonify, redirect, url_for, session
@@ -30,6 +32,25 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024 # 16MB Max Request Payload
 # Rate limiting dictionary for failed login attempts (IP -> {attempts, lock_until})
 failed_login_attempts = {}
 
+def get_csrf_token():
+    """Generate or retrieve session CSRF token."""
+    if '_csrf_token' not in session:
+        session['_csrf_token'] = secrets.token_hex(16)
+    return session['_csrf_token']
+
+app.jinja_env.globals['csrf_token'] = get_csrf_token
+
+def validate_csrf():
+    """Verify CSRF token on state-changing requests."""
+    if request.method in ('POST', 'DELETE', 'PUT', 'PATCH'):
+        if request.endpoint and request.endpoint in ('login_view', 'health_check', 'readiness_check'):
+            return
+        token = request.headers.get('X-CSRF-Token') or request.form.get('csrf_token')
+        if not token or token != session.get('_csrf_token'):
+            logger.warning(f"CSRF validation failed for path {request.path}")
+            if request.is_json or request.path.startswith('/api/'):
+                return jsonify({"success": False, "error": {"code": "CSRF_ERROR", "message": "CSRF token validation failed."}}), 403
+
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -40,9 +61,25 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def role_required(*allowed_roles):
+    """Decorator to enforce Role-Based Access Control (RBAC)."""
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            user = session.get('user', {})
+            user_role = user.get('role', 'student')
+            if user_role not in allowed_roles:
+                logger.warning(f"Access denied for user '{user.get('username')}' with role '{user_role}' to endpoint '{request.endpoint}'")
+                if request.is_json or request.path.startswith('/api/'):
+                    return jsonify({"success": False, "error": {"code": "FORBIDDEN", "message": "Role authorization failed. Insufficient privileges."}}), 403
+                return render_template('login.html', error="Insufficient privileges."), 403
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+
 @app.route('/health', methods=['GET'])
 def health_check():
-    """System health check endpoint for monitoring."""
+    """System health check endpoint."""
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
@@ -52,8 +89,19 @@ def health_check():
 
 @app.route('/ready', methods=['GET'])
 def readiness_check():
-    """System readiness check endpoint."""
-    return jsonify({"status": "ready"}), 200
+    """System readiness check endpoint performing deep dependency verification."""
+    db_ok = os.path.exists(config.DB_PATH)
+    model_ok = engine.is_trained and os.path.exists(config.MODEL_PATH)
+    
+    if db_ok and model_ok:
+        return jsonify({"status": "ready", "database": "ready", "model": "ready"}), 200
+    
+    return jsonify({
+        "status": "not_ready",
+        "database": "ready" if db_ok else "missing",
+        "model": "ready" if model_ok else "untrained"
+    }), 503
+
 
 @app.route('/login', methods=['GET', 'POST'])
 def login_view():
@@ -226,7 +274,9 @@ def api_add_student():
 
 @app.route('/api/students/<student_id>', methods=['DELETE'])
 @login_required
+@role_required('admin')
 def api_delete_student(student_id):
+
     valid_id, id_val = utils_validation.validate_student_id(student_id)
     if not valid_id:
         return jsonify({"success": False, "error": {"code": "VALIDATION_ERROR", "message": id_val}}), 422
@@ -312,21 +362,24 @@ def chat_view():
     return render_template('index.html', default_tab='tab-chat', current_user=session.get('user'))
 
 @app.route('/api/recognition/frame', methods=['POST'])
+@login_required
 def api_recognition_frame():
     """Process base64 webcam frame captured by client browser."""
     data = request.get_json() or {}
     image_b64 = data.get('image', '')
     if not image_b64:
-        return jsonify({"status": "error", "message": "Image frame is required."}), 400
+        return jsonify({"success": False, "error": {"code": "VALIDATION_ERROR", "message": "Image frame is required."}}), 400
 
     annotated_b64, notifications, err = engine.process_base64_frame(image_b64)
     if err:
-        return jsonify({"status": "error", "message": err}), 400
+        return jsonify({"success": False, "error": {"code": "RECOGNITION_ERROR", "message": err}}), 400
 
     return jsonify({
-        "status": "success",
-        "image": annotated_b64,
-        "notifications": notifications
+        "success": True,
+        "data": {
+            "image": annotated_b64,
+            "notifications": notifications
+        }
     })
 
 @app.route('/api/chat', methods=['POST'])
@@ -336,7 +389,7 @@ def api_chat():
     data = request.get_json() or {}
     message = data.get('message', '').strip()
     if not message:
-        return jsonify({"status": "error", "message": "Message is required."}), 400
+        return jsonify({"success": False, "error": {"code": "VALIDATION_ERROR", "message": "Message is required."}}), 400
     
     res = analytics_engine.process_chat_query(message)
     return jsonify(res)
@@ -346,13 +399,17 @@ def api_chat():
 def api_analytics():
     """Get rich analytics summary for dashboard and chart rendering."""
     summary = database.get_analytics_summary()
-    return jsonify({"status": "success", "analytics": summary})
+    return jsonify({"success": True, "data": {"analytics": summary}})
 
 @app.route('/api/train', methods=['POST'])
 @login_required
+@role_required('admin')
 def api_train_model():
+    user = session.get('user', {})
     ok, msg = engine.train_model()
-    return jsonify({"status": "success" if ok else "error", "message": msg})
+    database.log_audit_event(user.get('username', 'admin'), "TRAIN_MODEL", "SUCCESS" if ok else "FAILED", msg)
+    return jsonify({"success": ok, "message": msg})
+
 
 if __name__ == '__main__':
     database.init_db()

@@ -10,8 +10,9 @@ from face_engine import engine
 
 def main():
     print("=" * 65)
-    print("   🧠 AI FACE RECOGNITION ATTENDANCE & BUSINESS STUDIO")
+    print("   AI FACE RECOGNITION ATTENDANCE & BUSINESS STUDIO")
     print("=" * 65)
+
     
     print("[1/3] Initializing SQLite database...")
     database.init_db()

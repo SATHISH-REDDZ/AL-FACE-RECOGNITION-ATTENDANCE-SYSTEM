@@ -10,6 +10,12 @@
 An AI-powered web-based attendance management system that uses computer vision and face recognition to identify registered students and automatically record attendance through a browser camera.
 
 ---
+## 🌐 Web Application Links
+
+- 🚀 **Live Web Application (Local):** [http://127.0.0.1:5000](http://127.0.0.1:5000)
+- 💬 **AI Chat Studio:** [http://127.0.0.1:5000/chat](http://127.0.0.1:5000/chat)
+- 🐙 **GitHub Repository:** [https://github.com/SATHISH-REDDZ/AL-FACE-RECOGNITION-ATTENDANCE-SYSTEM](https://github.com/SATHISH-REDDZ/AL-FACE-RECOGNITION-ATTENDANCE-SYSTEM)
+
 
 ## 📌 1. Project Introduction
 

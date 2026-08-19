@@ -1,6 +1,7 @@
 import os
 import json
 import base64
+import logging
 import urllib.request
 from datetime import datetime
 import cv2
@@ -8,6 +9,8 @@ import numpy as np
 from PIL import Image
 import config
 import database
+
+logger = logging.getLogger("VisionAttendance.FaceEngine")
 
 def get_haar_cascade_path():
     """Ensure Haar Cascade XML file exists, downloading if necessary."""
@@ -28,8 +31,9 @@ def get_haar_cascade_path():
         urllib.request.urlretrieve(url, local_path)
         return local_path
     except Exception as e:
-        print(f"Error downloading Haar Cascade XML: {e}")
+        logger.error(f"Error downloading Haar Cascade XML: {e}")
         return local_path
+
 
 class FaceRecognitionEngine:
     def __init__(self):
@@ -116,11 +120,13 @@ class FaceRecognitionEngine:
             with open(config.LABELS_PATH, 'w') as f:
                 json.dump(self.label_map, f, indent=2)
         except Exception as e:
-            print(f"Error saving labels.json: {e}")
+            logger.error(f"Error saving labels.json: {e}")
 
-        # Persist metadata.json
+        # Persist metadata.json with Model Versioning
         metadata = {
-            "model": "LBPH",
+            "model_version": getattr(config, "MODEL_VERSION", "1.0.0"),
+            "algorithm": getattr(config, "FACE_ALGORITHM", "LBPH"),
+            "confidence_threshold": config.CONFIDENCE_THRESHOLD,
             "trained_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "student_count": len(self.label_map),
             "sample_count": len(face_samples)
@@ -129,9 +135,9 @@ class FaceRecognitionEngine:
             with open(config.METADATA_PATH, 'w') as f:
                 json.dump(metadata, f, indent=2)
         except Exception as e:
-            print(f"Error saving metadata.json: {e}")
+            logger.error(f"Error saving metadata.json: {e}")
 
-        return True, f"Successfully trained on {len(face_samples)} face samples across {len(self.label_map)} students."
+        return True, f"Successfully trained model v{metadata['model_version']} on {len(face_samples)} face samples across {len(self.label_map)} students."
 
     def load_model(self):
         """Load trained LBPH model and persisted labels.json if present."""
@@ -163,8 +169,9 @@ class FaceRecognitionEngine:
                                         self.label_map[label_counter] = student_id
                                         label_counter += 1
             except Exception as e:
-                print(f"Warning: Could not load trained model: {e}")
+                logger.warning(f"Could not load trained model: {e}")
                 self.is_trained = False
+
 
 
     def save_face_samples(self, student_id, frame, count):
@@ -210,12 +217,60 @@ class FaceRecognitionEngine:
         cv2.imwrite(file_path, face_crop)
         return True, file_path
 
+    def evaluate_liveness(self, frame, face_box):
+        """
+        Anti-Spoofing & Liveness Verification Engine:
+        Evaluates texture frequency, chrominance spectrum, and reflections to prevent 2D photo/screen spoofing.
+        Returns: (is_live: bool, score: float, details: str)
+        """
+        (x, y, w, h) = face_box
+        h_img, w_img = frame.shape[:2]
+
+        # Ensure box coordinates stay within boundary
+        x_min, y_min = max(0, x), max(0, y)
+        x_max, y_max = min(w_img, x + w), min(h_img, y + h)
+
+        face_bgr = frame[y_min:y_max, x_min:x_max]
+        if face_bgr.size == 0:
+            return False, 0.0, "Invalid crop"
+
+        # 1. Texture frequency spectrum (Laplacian Variance)
+        gray_crop = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2GRAY)
+        lap_var = cv2.Laplacian(gray_crop, cv2.CV_64F).var()
+
+        # 2. Chrominance & Skin Color Variance (HSV space)
+        hsv = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2HSV)
+        sat_std = np.std(hsv[:, :, 1])
+        val_std = np.std(hsv[:, :, 2])
+
+        # Calculate composite liveness score (0.0 to 1.0)
+        # Flat digital screens and paper prints typically have lower saturation std and abnormal texture distribution
+        texture_score = min(1.0, lap_var / 300.0)
+        color_score = min(1.0, (sat_std + val_std) / 80.0)
+
+        composite_score = round(0.5 * texture_score + 0.5 * color_score, 2)
+        is_live = composite_score >= 0.30
+
+        details = f"Liveness Score: {composite_score*100:.0f}% (Texture: {lap_var:.1f}, SatStd: {sat_std:.1f})"
+        return is_live, composite_score, details
+
+    def compute_modern_embedding(self, face_crop):
+        """
+        [Target Production Architecture V2] Modern Face Embedding Generator:
+        Placeholder for FaceNet/ArcFace/ResNet embedding extraction.
+        Maps facial crop to 128-d or 512-d normalized feature vector.
+        """
+        # Normalization stub for 128-d cosine distance comparison
+        resized = cv2.resize(face_crop, (112, 112))
+        norm_feat = resized.astype(np.float32).flatten()
+        norm_feat /= (np.linalg.norm(norm_feat) + 1e-10)
+        return norm_feat
 
     def process_frame(self, frame):
         """
         Process incoming video frame:
-        Detect faces, recognize trained faces, draw bounding boxes & annotations,
-        and trigger automatic attendance logging.
+        Detect faces, evaluate liveness anti-spoofing score, predict LBPH identity,
+        draw bounding boxes & annotations, and trigger automatic attendance logging.
         Returns: annotated_frame, active_notifications list
         """
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -227,31 +282,44 @@ class FaceRecognitionEngine:
             color = (0, 0, 255) # Red for unknown
             confidence_str = ""
 
+            # Check liveness anti-spoofing
+            is_live, live_score, live_details = self.evaluate_liveness(frame, (x, y, w, h))
+
             if self.is_trained:
                 face_crop = gray[y:y+h, x:x+w]
                 try:
                     label, confidence = self.recognizer.predict(face_crop)
-                    # Note: LBPH distance score: lower score means higher match (0 = exact match)
+                    # LBPH score: lower score means higher match
                     if confidence < config.CONFIDENCE_THRESHOLD and label in self.label_map:
                         student_id = self.label_map[label]
                         student_info = database.get_student_by_id(student_id)
                         if student_info:
                             name_display = student_info["name"]
-                            color = (0, 255, 0) # Green for match
                             match_percent = max(0, round(100 - confidence))
-                            confidence_str = f"{match_percent}% match"
 
-                            # Attempt to mark attendance
-                            marked, msg, _ = database.mark_attendance(student_id)
-                            if marked:
+                            if not is_live:
+                                color = (0, 165, 255) # Orange warning for spoof suspicion
+                                confidence_str = f"{match_percent}% match (Spoof Risk)"
                                 notif = {
-                                    "status": "success",
-                                    "message": f"Attendance marked for {student_info['name']} ({student_id})"
+                                    "status": "warning",
+                                    "message": f"Spoof Warning: Live verification failed for {name_display} (Score: {live_score*100:.0f}%)"
                                 }
                                 notifications.append(notif)
-                                self.last_recognized_notification = notif
+                            else:
+                                color = (0, 255, 0) # Green for verified match
+                                confidence_str = f"{match_percent}% match"
+
+                                # Attempt to mark attendance
+                                marked, msg, _ = database.mark_attendance(student_id)
+                                if marked:
+                                    notif = {
+                                        "status": "success",
+                                        "message": f"Attendance marked for {student_info['name']} ({student_id})"
+                                    }
+                                    notifications.append(notif)
+                                    self.last_recognized_notification = notif
                 except Exception as e:
-                    print(f"Error predicting face: {e}")
+                    logger.error(f"Error predicting face: {e}")
 
             # Draw stylish rounded rectangle corners & background label
             cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)

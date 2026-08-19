@@ -1,28 +1,24 @@
-# Environment & Secrets
+.git
+.gitignore
 .env
 .env.local
 *.env
-
-# Python & Virtual Env
 __pycache__/
-*.py[cod]
-*$py.class
+*.pyc
+*.pyo
+*.pyd
 .venv/
 venv/
 env/
 .pytest_cache/
-
-# Data & Models
 *.db
 *.sqlite
 data/attendance.db
 data/trainer/trainer.yml
 data/dataset/*
 !data/dataset/.gitkeep
-
-# IDE & OS
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
-
+tests/

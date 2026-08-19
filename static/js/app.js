@@ -139,15 +139,21 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const res = await fetch('/api/recognition/frame', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': getCsrfToken()
+                },
                 body: JSON.stringify({ image: base64Frame })
             });
 
             const data = await res.json();
-            if (data.status === 'success' && data.image) {
-                clientPreview.src = data.image;
-                if (data.notifications && data.notifications.length > 0) {
-                    data.notifications.forEach(n => showToast(n.message, n.status));
+            const imgData = data.image || (data.data && data.data.image);
+            const notifs = data.notifications || (data.data && data.data.notifications);
+
+            if ((data.success || data.status === 'success') && imgData) {
+                clientPreview.src = imgData;
+                if (notifs && notifs.length > 0) {
+                    notifs.forEach(n => showToast(n.message, n.status));
                     fetchStats();
                     loadRecentActivity();
                 }
@@ -343,7 +349,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (captureMode === 'browser' && capturedPhotos.length > 0) {
                 res = await fetch('/api/students', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': getCsrfToken()
+                    },
                     body: JSON.stringify({
                         student_id: studentId,
                         name: name,
@@ -357,7 +366,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Use active server camera capture endpoint
                 res = await fetch('/api/students/capture_webcam', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': getCsrfToken()
+                    },
                     body: JSON.stringify({
                         student_id: studentId,
                         name: name,
@@ -369,7 +381,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 data = await res.json();
             }
 
-            if (data.status === 'success') {
+            if (data.success || data.status === 'success') {
                 showToast(data.message, 'success');
                 regForm.reset();
                 capturedPhotos = [];
@@ -377,7 +389,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 renderSnapshots();
                 fetchStats();
             } else {
-                showToast(data.message || 'Registration failed.', 'error');
+                const errMsg = data.message || (data.error && data.error.message) || 'Registration failed.';
+                showToast(errMsg, 'error');
             }
         } catch (err) {
             showToast('Registration failed: ' + err.message, 'error');
@@ -501,14 +514,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function deleteStudent(studentId) {
         try {
-            const res = await fetch(`/api/students/${studentId}`, { method: 'DELETE' });
+            const res = await fetch(`/api/students/${studentId}`, { 
+                method: 'DELETE',
+                headers: { 'X-CSRF-Token': getCsrfToken() }
+            });
             const data = await res.json();
-            if (data.status === 'success') {
+            if (data.success || data.status === 'success') {
                 showToast(data.message, 'success');
                 loadStudentsDirectory();
                 fetchStats();
             } else {
-                showToast('Failed to delete student.', 'error');
+                const errMsg = data.message || (data.error && data.error.message) || 'Failed to delete student.';
+                showToast(errMsg, 'error');
             }
         } catch (err) {
             showToast('Delete request error.', 'error');
@@ -639,17 +656,20 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const res = await fetch('/api/chat', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': getCsrfToken()
+                },
                 body: JSON.stringify({ message: text })
             });
 
             const data = await res.json();
             removeTypingIndicator(typingId);
 
-            if (data.status === 'success') {
+            if (data.success || data.status === 'success') {
                 renderBotMessage(data.answer, data.chart);
             } else {
-                renderBotMessage("⚠️ " + (data.message || "An error occurred while analyzing your query."));
+                renderBotMessage("⚠️ " + (data.message || (data.error && data.error.message) || "An error occurred while analyzing your query."));
             }
         } catch (err) {
             removeTypingIndicator(typingId);

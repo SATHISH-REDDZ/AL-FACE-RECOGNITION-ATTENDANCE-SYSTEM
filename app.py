@@ -40,6 +40,7 @@ def get_csrf_token():
 
 app.jinja_env.globals['csrf_token'] = get_csrf_token
 
+@app.before_request
 def validate_csrf():
     """Verify CSRF token on state-changing requests."""
     if request.method in ('POST', 'DELETE', 'PUT', 'PATCH'):
@@ -49,7 +50,7 @@ def validate_csrf():
         if not token or token != session.get('_csrf_token'):
             logger.warning(f"CSRF validation failed for path {request.path}")
             if request.is_json or request.path.startswith('/api/'):
-                return jsonify({"success": False, "error": {"code": "CSRF_ERROR", "message": "CSRF token validation failed."}}), 403
+                return jsonify({"success": False, "status": "error", "error": {"code": "CSRF_ERROR", "message": "CSRF token validation failed."}}), 403
 
 def login_required(f):
     @wraps(f)
@@ -268,9 +269,115 @@ def api_add_student():
 
     return jsonify({
         "success": True,
+        "status": "success",
         "message": f"Student registered successfully. Saved {saved_count} face samples.",
         "data": {"student_id": id_val, "saved_count": saved_count, "training": train_msg, "quality_notes": saved_errors[:3]}
     }), 201
+
+@app.route('/api/students/capture_webcam', methods=['POST'])
+@login_required
+@role_required('admin')
+def api_add_student_webcam():
+    """Register student and automatically capture N facial images from server webcam feed."""
+    data = request.get_json() or {}
+
+    valid_id, id_val = utils_validation.validate_student_id(data.get('student_id'))
+    if not valid_id:
+        return jsonify({"success": False, "status": "error", "error": {"code": "VALIDATION_ERROR", "message": id_val}}), 422
+
+    valid_name, name_val = utils_validation.validate_name(data.get('name'))
+    if not valid_name:
+        return jsonify({"success": False, "status": "error", "error": {"code": "VALIDATION_ERROR", "message": name_val}}), 422
+
+    valid_dept, dept_val = utils_validation.validate_department(data.get('department'))
+    if not valid_dept:
+        return jsonify({"success": False, "status": "error", "error": {"code": "VALIDATION_ERROR", "message": dept_val}}), 422
+
+    valid_email, email_val = utils_validation.validate_email(data.get('email', ''))
+    if not valid_email:
+        return jsonify({"success": False, "status": "error", "error": {"code": "VALIDATION_ERROR", "message": email_val}}), 422
+
+    num_samples = int(data.get('num_samples', 15))
+    num_samples = max(5, min(num_samples, 30))
+
+    success, msg = database.add_student(id_val, name_val, dept_val, email_val)
+    if not success:
+        return jsonify({"success": False, "status": "error", "error": {"code": "DATABASE_ERROR", "message": msg}}), 400
+
+    cam = get_camera()
+    saved_count = 0
+    attempts = 0
+    saved_errors = []
+
+    while saved_count < num_samples and attempts < num_samples * 4:
+        attempts += 1
+        ret, frame = cam.read()
+        if not ret or frame is None:
+            break
+        ok, err = engine.save_face_samples(id_val, frame, saved_count + 1)
+        if ok:
+            saved_count += 1
+        else:
+            if err not in saved_errors:
+                saved_errors.append(err)
+
+    # Retrain engine automatically
+    train_ok, train_msg = engine.train_model()
+
+    user = session.get('user', {})
+    database.log_audit_event(user.get('username', 'admin'), "ADD_STUDENT_WEBCAM", "SUCCESS", f"Enrolled {name_val} ({id_val}) with {saved_count} webcam samples")
+
+    if saved_count == 0:
+        return jsonify({
+            "success": False,
+            "status": "error",
+            "message": f"Could not capture valid face samples from webcam. Reasons: {', '.join(saved_errors[:2])}",
+            "error": {"code": "FACE_CAPTURE_FAILED", "message": "No valid faces detected on webcam feed."}
+        }), 400
+
+    return jsonify({
+        "success": True,
+        "status": "success",
+        "message": f"Student {name_val} registered! Captured {saved_count} samples and updated model.",
+        "data": {"student_id": id_val, "saved_count": saved_count, "training": train_msg}
+    }), 201
+
+@app.route('/api/sessions', methods=['GET', 'POST'])
+@login_required
+def api_attendance_sessions():
+    """List or create attendance sessions (Department -> Class/Subject -> Faculty -> Session)."""
+    if request.method == 'POST':
+        data = request.get_json() or {}
+        session_name = data.get('session_name', '').strip()
+        department = data.get('department', '').strip()
+        subject = data.get('subject', 'General').strip()
+        faculty = data.get('faculty', 'Administrator').strip()
+
+        if not session_name or not department:
+            return jsonify({"success": False, "status": "error", "error": {"code": "VALIDATION_ERROR", "message": "Session name and department are required."}}), 422
+
+        session_id = database.create_attendance_session(session_name, department, subject, faculty)
+        user = session.get('user', {})
+        database.log_audit_event(user.get('username', 'admin'), "CREATE_SESSION", "SUCCESS", f"Created session '{session_name}' (ID: {session_id})")
+
+        return jsonify({"success": True, "status": "success", "message": f"Session '{session_name}' created and set as active.", "data": {"session_id": session_id}}), 201
+
+    sessions = database.get_all_sessions()
+    active_sess = database.get_active_session()
+    return jsonify({"success": True, "status": "success", "sessions": sessions, "active_session": active_sess})
+
+@app.route('/api/sessions/active', methods=['GET', 'POST'])
+@login_required
+def api_active_session():
+    """Retrieve or set active attendance session."""
+    if request.method == 'POST':
+        data = request.get_json() or {}
+        session_id = data.get('session_id')
+        database.set_active_session(session_id)
+        return jsonify({"success": True, "status": "success", "message": "Active session updated."})
+
+    active = database.get_active_session()
+    return jsonify({"success": True, "status": "success", "active_session": active})
 
 @app.route('/api/students/<student_id>', methods=['DELETE'])
 @login_required
@@ -306,7 +413,16 @@ def api_get_attendance():
     search = request.args.get('search')
 
     logs = database.get_attendance_logs(date_filter, department_filter, search)
-    return jsonify({"status": "success", "logs": logs})
+    return jsonify({"success": True, "status": "success", "logs": logs})
+
+@app.route('/api/audit', methods=['GET'])
+@login_required
+@role_required('admin')
+def api_get_audit_logs():
+    """Fetch system security & administrative audit log entries."""
+    logs = database.get_audit_logs(limit=100)
+    return jsonify({"success": True, "status": "success", "audit_logs": logs})
+
 
 @app.route('/api/attendance/export', methods=['GET'])
 @login_required
@@ -344,7 +460,7 @@ def api_export_attendance():
                 headers={"Content-disposition": f"attachment; filename={filename_base}.xlsx"}
             )
         except Exception as e:
-            print(f"Excel export failed, falling back to CSV: {e}")
+            logger.warning(f"Excel export failed, falling back to CSV: {e}")
 
     # Default CSV Export
     csv_data = df.to_csv(index=False)
@@ -410,10 +526,31 @@ def api_train_model():
     database.log_audit_event(user.get('username', 'admin'), "TRAIN_MODEL", "SUCCESS" if ok else "FAILED", msg)
     return jsonify({"success": ok, "message": msg})
 
+@app.errorhandler(404)
+def handle_not_found(e):
+    if request.is_json or request.path.startswith('/api/'):
+        return jsonify({"success": False, "error": {"code": "NOT_FOUND", "message": "Requested API resource not found."}}), 404
+    return render_template('index.html', error="Resource not found."), 404
+
+@app.errorhandler(Exception)
+def handle_global_exception(e):
+    logger.exception(f"Unhandled exception on path '{request.path}': {e}")
+    if request.is_json or request.path.startswith('/api/'):
+        return jsonify({
+            "success": False,
+            "status": "error",
+            "error": {
+                "code": "INTERNAL_SERVER_ERROR",
+                "message": "An unexpected internal server error occurred."
+            }
+        }), 500
+    return render_template('login.html', error="An unexpected server error occurred."), 500
+
 
 if __name__ == '__main__':
     database.init_db()
     engine.load_model()
     app.run(host=config.HOST, port=config.PORT, debug=config.DEBUG)
+
 
 

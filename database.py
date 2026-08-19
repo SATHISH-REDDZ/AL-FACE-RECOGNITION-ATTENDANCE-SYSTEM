@@ -1,7 +1,11 @@
+import logging
 import sqlite3
 from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
 import config
+
+logger = logging.getLogger("VisionAttendance.Database")
+
 
 def get_connection():
     """Create a database connection with dictionary cursor row factory and Foreign Keys enabled."""
@@ -27,6 +31,42 @@ def init_db():
         );
     """)
 
+    # Departments Table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS departments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            dept_name TEXT UNIQUE NOT NULL,
+            dept_code TEXT UNIQUE NOT NULL
+        );
+    """)
+
+    # Classes Table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS classes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            class_name TEXT UNIQUE NOT NULL,
+            department TEXT NOT NULL
+        );
+    """)
+
+    # Subjects Table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS subjects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            subject_name TEXT NOT NULL,
+            subject_code TEXT UNIQUE NOT NULL
+        );
+    """)
+
+    # Faculty Table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS faculty (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL
+        );
+    """)
+
     # Students Table with Soft-Deletion Support
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS students (
@@ -34,36 +74,47 @@ def init_db():
             student_id TEXT UNIQUE NOT NULL,
             name TEXT NOT NULL,
             department TEXT NOT NULL,
+            class_name TEXT DEFAULT 'General',
             email TEXT,
             is_active INTEGER DEFAULT 1,
             registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
 
-
-    # Attendance Sessions Table
+    # Attendance Sessions Table (Department -> Class/Subject -> Faculty -> Session)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS attendance_sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_name TEXT NOT NULL,
             department TEXT NOT NULL,
+            subject TEXT DEFAULT 'General',
+            faculty TEXT DEFAULT 'Administrator',
             date TEXT NOT NULL,
+            is_active INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
     
-    # Attendance Log Table
+    # Attendance Log Table with Unique Session Constraint
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS attendance (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             student_id TEXT NOT NULL,
             name TEXT NOT NULL,
             department TEXT NOT NULL,
+            session_id INTEGER,
             date TEXT NOT NULL,
             time TEXT NOT NULL,
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (student_id) REFERENCES students (student_id)
+            FOREIGN KEY (student_id) REFERENCES students (student_id),
+            FOREIGN KEY (session_id) REFERENCES attendance_sessions (id)
         );
+    """)
+
+    # Create Unique Index to prevent duplicate student attendance per session per date
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_uniq_attendance_session 
+        ON attendance(student_id, session_id, date);
     """)
 
     # Audit Logs Table
@@ -82,13 +133,39 @@ def init_db():
     try:
         cursor.execute("ALTER TABLE students ADD COLUMN is_active INTEGER DEFAULT 1;")
     except Exception:
-        pass # Column already exists
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE students ADD COLUMN class_name TEXT DEFAULT 'General';")
+    except Exception:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE attendance_sessions ADD COLUMN subject TEXT DEFAULT 'General';")
+    except Exception:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE attendance_sessions ADD COLUMN faculty TEXT DEFAULT 'Administrator';")
+    except Exception:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE attendance_sessions ADD COLUMN is_active INTEGER DEFAULT 0;")
+    except Exception:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE attendance ADD COLUMN session_id INTEGER;")
+    except Exception:
+        pass
     
     conn.commit()
     conn.close()
 
     # Seed default admin if no users exist
     seed_default_admin()
+
 
 
 def log_audit_event(username, action, status="SUCCESS", details=""):
@@ -103,7 +180,7 @@ def log_audit_event(username, action, status="SUCCESS", details=""):
         conn.commit()
         conn.close()
     except Exception as e:
-        print(f"Audit log error: {e}")
+        logger.error(f"Audit log error: {e}")
 
 
 def seed_default_admin():
@@ -113,7 +190,11 @@ def seed_default_admin():
     cursor.execute("SELECT COUNT(*) as count FROM users;")
     if cursor.fetchone()["count"] == 0:
         username = config.ADMIN_USERNAME
-        password = config.ADMIN_PASSWORD or "admin123"
+        password = config.ADMIN_PASSWORD
+        if not password:
+            password = "admin123"
+            logger.warning("ADMIN_PASSWORD not set in environment. Defaulting initial password. Please update immediately!")
+        
         hashed = generate_password_hash(password)
         cursor.execute("""
             INSERT INTO users (username, password_hash, role, name)
@@ -121,6 +202,7 @@ def seed_default_admin():
         """, (username, hashed, "admin", "System Administrator"))
         conn.commit()
     conn.close()
+
 
 
 def create_user(username, password, name, role="admin"):
@@ -212,9 +294,58 @@ def delete_student(student_id):
     return True
 
 
-def mark_attendance(student_id):
+def create_attendance_session(session_name, department, subject="General", faculty="Administrator"):
+    """Create a new attendance session and set it as active."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    today_date = datetime.now().strftime("%Y-%m-%d")
+    
+    # Deactivate all current sessions first
+    cursor.execute("UPDATE attendance_sessions SET is_active = 0;")
+    
+    cursor.execute("""
+        INSERT INTO attendance_sessions (session_name, department, subject, faculty, date, is_active)
+        VALUES (?, ?, ?, ?, ?, 1);
+    """, (session_name, department, subject, faculty, today_date))
+    
+    session_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return session_id
+
+def get_active_session():
+    """Retrieve currently active attendance session if any."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM attendance_sessions WHERE is_active = 1 ORDER BY id DESC LIMIT 1;")
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_all_sessions():
+    """Fetch all recorded attendance sessions."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM attendance_sessions ORDER BY id DESC;")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def set_active_session(session_id):
+    """Set a specific session as active (or 0 to deactivate all)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE attendance_sessions SET is_active = 0;")
+    if session_id and session_id > 0:
+        cursor.execute("UPDATE attendance_sessions SET is_active = 1 WHERE id = ?;", (session_id,))
+    conn.commit()
+    conn.close()
+    return True
+
+def mark_attendance(student_id, session_id=None):
     """
-    Mark student attendance if not already marked within the cooldown threshold.
+    Mark student attendance if not already marked for the current session and date.
+    Prevents duplicate attendance entries per session at both query and DB constraint levels.
     Returns (success: bool, status_message: str, student_info: dict)
     """
     student = get_student_by_id(student_id)
@@ -228,7 +359,33 @@ def mark_attendance(student_id):
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Check last attendance timestamp for cooldown check
+    # Determine active session if session_id is not passed
+    if not session_id:
+        cursor.execute("SELECT id FROM attendance_sessions WHERE is_active = 1 LIMIT 1;")
+        sess_row = cursor.fetchone()
+        if sess_row:
+            session_id = sess_row["id"]
+
+    # 1. Attendance Session Duplicate Prevention Check
+    if session_id:
+        cursor.execute("""
+            SELECT id FROM attendance 
+            WHERE student_id = ? AND session_id = ? AND date = ?;
+        """, (student_id, session_id, today_date))
+        if cursor.fetchone():
+            conn.close()
+            return False, f"Attendance already marked for {student['name']} in current session.", student
+    else:
+        # Fallback check for same date if no active session
+        cursor.execute("""
+            SELECT id FROM attendance 
+            WHERE student_id = ? AND date = ? AND session_id IS NULL;
+        """, (student_id, today_date))
+        if cursor.fetchone():
+            conn.close()
+            return False, f"Attendance already marked for {student['name']} today.", student
+
+    # 2. Check last attendance timestamp for cooldown check
     cursor.execute("""
         SELECT timestamp FROM attendance 
         WHERE student_id = ? 
@@ -240,7 +397,6 @@ def mark_attendance(student_id):
         try:
             last_time = datetime.strptime(last_entry["timestamp"], "%Y-%m-%d %H:%M:%S")
         except ValueError:
-            # Handle SQLite ISO format fallback
             last_time = datetime.fromisoformat(str(last_entry["timestamp"]))
 
         seconds_since = (now - last_time).total_seconds()
@@ -248,15 +404,23 @@ def mark_attendance(student_id):
             conn.close()
             return False, f"Attendance already marked recently ({int(seconds_since)}s ago).", student
 
-    # Insert attendance record
-    cursor.execute("""
-        INSERT INTO attendance (student_id, name, department, date, time, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?);
-    """, (student_id, student["name"], student["department"], today_date, current_time, now.strftime("%Y-%m-%d %H:%M:%S")))
+    # 3. Insert attendance record with IntegrityError catch for UNIQUE constraints
+    try:
+        cursor.execute("""
+            INSERT INTO attendance (student_id, name, department, session_id, date, time, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?);
+        """, (student_id, student["name"], student["department"], session_id, today_date, current_time, now.strftime("%Y-%m-%d %H:%M:%S")))
 
-    conn.commit()
-    conn.close()
-    return True, f"Attendance marked for {student['name']}.", student
+        conn.commit()
+        conn.close()
+        return True, f"Attendance marked for {student['name']}.", student
+    except sqlite3.IntegrityError:
+        conn.close()
+        return False, f"Attendance record already exists for {student['name']} in this session.", student
+    except Exception as e:
+        conn.close()
+        return False, f"Database error: {str(e)}", student
+
 
 def get_attendance_logs(date_filter=None, department_filter=None, search_query=None):
     """Fetch attendance logs with optional filters."""
@@ -413,4 +577,15 @@ def get_analytics_summary():
         "recent_trend": recent_trend,
         "absent_students": absent_students
     }
+
+def get_audit_logs(limit=50):
+    """Fetch recent system audit log entries."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM audit_logs ORDER BY id DESC LIMIT ?;", (limit,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
 

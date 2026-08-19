@@ -56,6 +56,21 @@ class ValidationTestCase(unittest.TestCase):
         self.assertEqual(utils_validation.safe_next_url("https://malicious.com"), "/")
         self.assertEqual(utils_validation.safe_next_url("//malicious.com"), "/")
 
+    def test_base64_image_validation(self):
+        import base64
+        import cv2
+        import numpy as np
+
+        # Create dummy image
+        img = np.zeros((150, 150, 3), dtype=np.uint8)
+        _, buf = cv2.imencode('.jpg', img)
+        b64_str = "data:image/jpeg;base64," + base64.b64encode(buf).decode('utf-8')
+
+        valid, err, matrix = utils_validation.validate_base64_image(b64_str)
+        self.assertTrue(valid, f"Base64 validation failed: {err}")
+        self.assertIsNotNone(matrix)
+        self.assertEqual(matrix.shape[:2], (150, 150))
+
 class DatabaseAuthTestCase(unittest.TestCase):
     def setUp(self):
         database.init_db()
@@ -82,6 +97,51 @@ class DatabaseAuthTestCase(unittest.TestCase):
         student_after = database.get_student_by_id(test_id)
         self.assertIsNone(student_after) # Soft deleted from active queries
 
+    def test_session_management(self):
+        sess_id = database.create_attendance_session("Morning Shift", "Computer Science", "Python AI", "Prof. Alan")
+        self.assertIsNotNone(sess_id)
+
+        active = database.get_active_session()
+        self.assertIsNotNone(active)
+        self.assertEqual(active["session_name"], "Morning Shift")
+
+        database.set_active_session(0)
+        self.assertIsNone(database.get_active_session())
+
+    def test_audit_logging(self):
+        database.log_audit_event("unit_test_user", "TEST_ACTION", "SUCCESS", "Automated test detail")
+        conn = database.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM audit_logs WHERE username = 'unit_test_user';")
+        logs = cursor.fetchall()
+        conn.close()
+        self.assertTrue(len(logs) > 0)
+
+    def test_duplicate_attendance_prevention(self):
+        import time
+        t_id = f"STU_DUP_{int(time.time())}"
+        database.add_student(t_id, "Duplicate Check Student", "CSE", "dup@univ.edu")
+        sess_id = database.create_attendance_session("Session Dup Check", "CSE", "Algorithms", "Prof. Turing")
+
+        # First mark should succeed
+        ok1, msg1, _ = database.mark_attendance(t_id, session_id=sess_id)
+        self.assertTrue(ok1, f"First attendance mark failed: {msg1}")
+
+        # Second mark in same session must fail
+        ok2, msg2, _ = database.mark_attendance(t_id, session_id=sess_id)
+        self.assertFalse(ok2, "Duplicate attendance in same session was not prevented!")
+
+
+
+class FaceEngineTestCase(unittest.TestCase):
+    def test_liveness_evaluation(self):
+        import numpy as np
+        from face_engine import engine
+        dummy_frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+        is_live, score, details = engine.evaluate_liveness(dummy_frame, (50, 50, 150, 150))
+        self.assertIsInstance(is_live, bool)
+        self.assertGreaterEqual(score, 0.0)
+
 
 class APIEndpointsTestCase(unittest.TestCase):
     def setUp(self):
@@ -104,6 +164,23 @@ class APIEndpointsTestCase(unittest.TestCase):
         res = self.client.get('/api/stats', headers={"Accept": "application/json"})
         self.assertEqual(res.status_code, 401)
 
+        res_audit = self.client.get('/api/audit', headers={"Accept": "application/json"})
+        self.assertEqual(res_audit.status_code, 401)
+
+    def test_attendance_export(self):
+        with self.client.session_transaction() as sess:
+            sess['user'] = {'username': 'admin', 'role': 'admin', 'name': 'Admin User'}
+
+        res_csv = self.client.get('/api/attendance/export?format=csv')
+        self.assertEqual(res_csv.status_code, 200)
+        self.assertEqual(res_csv.mimetype, 'text/csv')
+
+        res_xlsx = self.client.get('/api/attendance/export?format=xlsx')
+        self.assertEqual(res_xlsx.status_code, 200)
+        self.assertIn('spreadsheetml', res_xlsx.mimetype)
+
 if __name__ == '__main__':
     unittest.main()
+
+
 
